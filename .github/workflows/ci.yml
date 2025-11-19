@@ -1,0 +1,53 @@
+name: 2048-ci-job
+
+on:
+  push:
+    branches:
+      - "feature/**"
+    paths-ignore:
+      - README.md
+
+jobs:
+  Code-Quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: setup node env
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: cache dependencies
+        id: cache-primes
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+
+      - name: install dependencies
+        run: npm install
+
+      - name: linting
+        run: npm run lint
+
+      - name: Run Trivy vulnerability scanner in fs mode
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          trivy-config: trivy.yaml
+
+      - name: Build
+        id: build
+        run: |
+          npm run build
+          echo "::set-output name=build-path::$(pwd)/build"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: react-build
+          path: build/
