@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: 2048-deployment
+  labels:
+    app: 2048-app
+  namespace: staging
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: 2048-app
+  template:
+    metadata:
+      labels:
+        app: 2048-app
+    spec:
+      containers:
+      - name: 2048-container
+        image: 767398111127.dkr.ecr.us-east-1.amazonaws.com/2048-app:latest
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+        ports:
+        - containerPort: 3000

@@ -1,12 +1,10 @@
-name: 2048-ci-job
+name: 2048-ci/cd-job
 
 on:
-  push:
-    branches:
-      - "feature/**"
-    paths-ignore:
-      - README.md
   workflow_dispatch:
+
+env:
+  AWS_ACCOUNT_ID: ${{ vars.aws_account_id }}
 
 jobs:
   Code-Quality:
@@ -43,19 +41,95 @@ jobs:
 
   Docker-build:
     runs-on: ubuntu-latest
+    needs: Code-Quality
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
 
       - name: Build and Push Docker Image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: true
-          tags: ${{ vars.DOCKERHUB_USERNAME }}/2048-app:${{ github.sha }}
+        run: | 
+          IMAGE_URI=$AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/2048-app:${{ github.sha }}
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+
+  staging-deploy:
+      needs: Docker-build
+      runs-on: ubuntu-latest
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v5
+
+        - name: Changes to staging manifest
+          run: |
+            sed -i "s|image: $AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/2048-app:.*|image: $AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/2048-app:${{ github.sha }}|" \
+            k8/staging/deployment.yaml
+        
+        - name: Push changes to git
+          run: |
+            git config --global user.name 'GitHub Actions'
+            git config --global user.email 'actions@github.com'
+            git add k8s/stage/deployment.yaml
+            git commit -m "Update stage image to ${{ needs.build-and-push.outputs.image-tag }}"
+            git push
+
+  pr-prod-deploy:
+      needs: staging-deploy
+      runs-on: ubuntu-latest
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v5
+
+        - name: Changes to PROD manifest
+          run: |
+            sed -i "s|image: $AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/2048-app:.*|image: $AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/2048-app:${{ github.sha }}|" \
+            k8/prod/deployment.yml
+          
+        - name: Commit prod changes
+          run: |
+            git add k8s/prod/deployment.yaml
+            git commit -m "Promote to prod: Update image to ${{ needs.build-and-push.outputs.image-tag }}" || echo "No changes to commit"
+            git push origin $BRANCH_NAME
+
+        - name: Create Pull Request
+          uses: peter-evans/create-pull-request@v6
+          with:
+            token: ${{ secrets.GITHUB_TOKEN }}
+            branch: ${{ env.BRANCH_NAME }}
+            base: main
+            title: "🚀 Promote to Production - ${{ needs.build-and-push.outputs.short-sha }}"
+            body: |
+              ## Production Deployment Request
+            
+              This PR promotes the changes from develop to production.
+            
+              ### Details
+              - **Image Tag**: `${{ needs.build-and-push.outputs.image-tag }}`
+              - **Commit SHA**: `${{ github.sha }}`
+              - **Stage Deployment**: ✅ Successful
+            
+              ### Changes
+              - Updated production deployment manifest with new image
+            
+              ### Deployment Steps
+              1. Review the changes
+              2. Approve and merge this PR
+              3. ArgoCD will automatically sync the changes to production
+            
+              ---
+              **Note**: Stage environment has been successfully deployed and tested.
+            labels: |
+              deployment
+              production
+              auto-generated
+            draft: false
