@@ -6,6 +6,10 @@ on:
 env:
   AWS_ACCOUNT_ID: ${{ vars.aws_account_id }}
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   Code-Quality:
     runs-on: ubuntu-latest
@@ -69,26 +73,35 @@ jobs:
       steps:
         - name: Checkout code
           uses: actions/checkout@v5
+          with:
+            token: ${{ secrets.GITHUB_TOKEN }}
+            ref: develop
+            fetch-depth: 0
 
         - name: Changes to staging manifest
           run: |
             sed -i "s|image: $AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/2048-app:.*|image: $AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/2048-app:${{ github.sha }}|" \
-            k8/staging/deployment.yaml
+            k8/staging/deployment.yml
         
         - name: Push changes to git
           run: |
             git config --global user.name 'GitHub Actions'
             git config --global user.email 'actions@github.com'
-            git add k8s/stage/deployment.yaml
-            git commit -m "Update stage image to ${{ needs.build-and-push.outputs.image-tag }}"
-            git push
+            git add k8/staging/deployment.yml
+            git commit -m "Update stage image to ${{ github.sha }}"
+            git push origin develop
 
   pr-prod-deploy:
       needs: staging-deploy
       runs-on: ubuntu-latest
+      env:
+        FEATURE_BRANCH: prod-deploy-${{ github.run_number }}-${{ github.sha }}
       steps:
         - name: Checkout code
           uses: actions/checkout@v5
+          with:
+            token: ${{ secrets.GITHUB_TOKEN }}
+            fetch-depth: 0
 
         - name: Changes to PROD manifest
           run: |
@@ -97,24 +110,27 @@ jobs:
           
         - name: Commit prod changes
           run: |
-            git add k8s/prod/deployment.yaml
-            git commit -m "Promote to prod: Update image to ${{ needs.build-and-push.outputs.image-tag }}" || echo "No changes to commit"
-            git push origin $BRANCH_NAME
+            git config --global user.name 'GitHub Actions'
+            git config --global user.email 'actions@github.com'
+            git checkout -b ${{ env.FEATURE_BRANCH }}
+            git add k8/prod/deployment.yml
+            git commit -m "Promote to prod: Update image to ${{ github.sha }}" || echo "No changes to commit"
+            git push origin ${{ env.FEATURE_BRANCH }}
 
         - name: Create Pull Request
           uses: peter-evans/create-pull-request@v6
           with:
             token: ${{ secrets.GITHUB_TOKEN }}
-            branch: ${{ env.BRANCH_NAME }}
-            base: main
-            title: "🚀 Promote to Production - ${{ needs.build-and-push.outputs.short-sha }}"
+            branch: ${{ env.FEATURE_BRANCH }}
+            base: master
+            title: "🚀 Promote to Production"
             body: |
               ## Production Deployment Request
             
               This PR promotes the changes from develop to production.
             
               ### Details
-              - **Image Tag**: `${{ needs.build-and-push.outputs.image-tag }}`
+              - **Image Tag**: `${{ github.sha }}`
               - **Commit SHA**: `${{ github.sha }}`
               - **Stage Deployment**: ✅ Successful
             

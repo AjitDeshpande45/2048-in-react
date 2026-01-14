@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: 2048-container
-        image: 767398111127.dkr.ecr.us-east-1.amazonaws.com/2048-app:latest
+        image: 455986776549.dkr.ecr.us-east-1.amazonaws.com/2048-app:latest
         resources:
           requests:
             cpu: "250m"
